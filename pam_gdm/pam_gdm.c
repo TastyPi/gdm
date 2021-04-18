@@ -39,20 +39,34 @@ pam_sm_authenticate (pam_handle_t  *pamh,
 {
 #ifdef HAVE_KEYUTILS
         int r;
-        void *cached_password = NULL;
+        char *cached_passwords = NULL;
+        char *last_cached_password = NULL;
         key_serial_t serial;
 
         serial = find_key_by_type_and_desc ("user", "cryptsetup", 0);
         if (serial == 0)
                 return PAM_AUTHINFO_UNAVAIL;
 
-        r = keyctl_read_alloc (serial, &cached_password);
-        if (r < 0 || r != strlen (cached_password))
+        r = keyctl_read_alloc (serial, &cached_passwords);
+        if (r < 0)
                 return PAM_AUTHINFO_UNAVAIL;
 
-        r = pam_set_item (pamh, PAM_AUTHTOK, cached_password);
+        // Find the last password in the NUL-separated list of passwords.
+        // Multiple passwords are returned either when the user enters an
+        // incorrect password or there are multiple encrypted drives.
+        // In the case of an incorrect password the last one is correct.
+        // In the case of multiple drives, choosing the last drive is as
+        // arbitrary a choice as any other, but choosing the last password at
+        // least supports multiple attempts on the last drive.
+        last_cached_password = cached_passwords;
+        for (char *c = cached_passwords; c < cached_passwords + r - 1; ++c) {
+                if (*c == 0)
+                        last_cached_password = c + 1;
+        }
 
-        free (cached_password);
+        r = pam_set_item (pamh, PAM_AUTHTOK, last_cached_password);
+
+        free (cached_passwords);
 
         if (r < 0)
                 return PAM_AUTH_ERR;
